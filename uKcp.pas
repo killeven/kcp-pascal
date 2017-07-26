@@ -192,17 +192,17 @@ begin
   Result := PUInt8(UInt32(p) + 2);
 end;
 
-// decode 32 bits unsigned int (lsb)
-function ikcp_decode32u(const p: PUInt8; dw: PUInt32): PUInt8;
-begin
-  dw^ := PUInt32(p)^;
-  Result := PUInt8(UInt32(p) + 4);
-end;
-
 // encode 32 bits unsigned int (lsb)
 function ikcp_encode32u(p: PUInt8; dw: UInt32): PUInt8;
 begin
   PUInt32(p)^ := dw;
+  Result := PUInt8(UInt32(p) + 4);
+end;
+
+// decode 32 bits unsigned int (lsb)
+function ikcp_decode32u(const p: PUInt8; dw: PUInt32): PUInt8;
+begin
+  dw^ := PUInt32(p)^;
   Result := PUInt8(UInt32(p) + 4);
 end;
 
@@ -346,6 +346,7 @@ begin
   Result^.mtu := IKCP_MTU_DEF;
   Result^.mss := Result^.mtu - IKCP_OVERHEAD;
   Result^.stream := 0;
+
   Result^.buffer := PUInt8(ikcp_malloc((Result^.mtu + IKCP_OVERHEAD) * 3));
   if (Result^.buffer = nil) then
   begin
@@ -353,6 +354,7 @@ begin
     Result := nil;
     Exit;
   end;
+
   iqueue_init(@Result^.snd_queue);
   iqueue_init(@Result^.rcv_queue);
   iqueue_init(@Result^.snd_buf);
@@ -450,13 +452,21 @@ var
 begin
   assert(kcp <> nil, 'ikcp_recv 1');
   ispeek := len < 0;
+
   if (iqueue_is_empty(@kcp^.rcv_queue)) then Exit(-1);
+
   if (len < 0) then len := -len;
+
   peeksize := ikcp_peeksize(kcp);
+
   if (peeksize < 0) then Exit(-2);
+
   if (peeksize > len) then Exit(-3);
+
   recover := False;
   if (kcp^.nrcv_que >= kcp^.rcv_wnd) then recover := True;
+
+  // merge fragment
   len := 0;
   p := kcp^.rcv_queue.next;
   while (p <> @kcp^.rcv_queue) do
@@ -468,21 +478,27 @@ begin
       memcpy(buffer, @seg^.data, seg^.len);
       Inc(buffer, seg^.len);
     end;
+
     Inc(len, seg^.len);
     fragment := seg^.frg;
+
     if (ikcp_canlog(kcp, CONST_IKCP_LOG_RECV)) then
     begin
       ikcp_log(kcp, CONST_IKCP_LOG_RECV, 'recv sn = %d', [seg^.sn]);
     end;
+
     if (not ispeek) then
     begin
       iqueue_del(seg);
       ikcp_segment_delete(kcp, seg);
       Dec(kcp^.nrcv_que);
     end;
+
     if (fragment = 0) then Break;
   end;
+
   assert(len = peeksize, 'ikcp_recv 2');
+
   // move available data from rcv_buf -> rcv_queue
   while (not iqueue_is_empty(@kcp^.rcv_buf)) do
   begin
@@ -497,6 +513,7 @@ begin
     end
     else Break;
   end;
+
   // fast recover
   if ((kcp^.nrcv_que < kcp^.rcv_wnd) and recover) then
   begin
@@ -513,9 +530,12 @@ var
   seg: PKcpSeg;
 begin
   if (iqueue_is_empty(@kcp^.rcv_queue)) then Exit(-1);
+
   seg := iqueue_entry(kcp^.rcv_queue.next);
   if (seg^.frg = 0) then Exit(seg^.len);
+
   if (kcp^.nrcv_que < seg^.frg + 1) then Exit(-1);
+
   Result := 0;
   seg := kcp^.rcv_queue.next;
   while (seg <> @kcp^.rcv_queue) do
@@ -537,6 +557,7 @@ begin
   assert(kcp^.mss > 0, 'ikcp_send 0');
   buffer := buf;
   if (len < 0) then Exit(-1);
+
 	// append to previous segment in streaming mode (if possible)
   if (kcp^.stream <> 0) then
   begin
@@ -545,7 +566,7 @@ begin
       old := iqueue_entry(kcp^.snd_queue.prev);
       if (old^.len < kcp^.mss) then
       begin
-        capacity := kcp^.mss  - old^.len;
+        capacity := kcp^.mss - old^.len;
         if (len < capacity) then
           extend := len
         else
@@ -573,8 +594,11 @@ begin
     count := 1
   else
     count := (len + kcp^.mss - 1) div kcp^.mss;
+
   if (count > 255) then Exit(-2);
+
   if (count = 0) then count := 1;
+
   // fragment
   for i := 0 to count - 1 do
   begin
@@ -643,6 +667,7 @@ var
   seg, next: PKcpSeg;
 begin
   if ((_itimediff(sn, kcp^.snd_una) < 0) or (_itimediff(sn, kcp^.snd_nxt) >= 0)) then Exit;
+
   seg := iqueue_entry(kcp^.snd_buf.next);
   while (seg <> @kcp^.snd_buf) do
   begin
@@ -683,6 +708,7 @@ var
   seg, next: PKcpSeg;
 begin
   if ((_itimediff(sn, kcp^.snd_una) < 0) or (_itimediff(sn, kcp^.snd_nxt) >= 0)) then Exit;
+
   seg := iqueue_entry(kcp^.snd_buf.next);
   while (seg <> @kcp^.snd_buf) do
   begin
@@ -707,22 +733,23 @@ begin
     newblock := 8;
     while (newblock < newsize) do newblock := newblock shl 1;
     acklist := PUInt32(ikcp_malloc(newblock * SizeOf(UInt32) * 2));
+
     if (acklist = nil) then
     begin
       assert(acklist <> nil, 'ikcp_ack_push 0');
       Abort();
     end;
+
     if (kcp^.acklist <> nil) then
     begin
-      x := 0;
-      while (x < kcp^.ackcount) do
+      for x := 0 to kcp^.ackcount - 1 do
       begin
         acklist[x * 2 + 0] := kcp^.acklist[x * 2 + 0];
         acklist[x * 2 + 1] := kcp^.acklist[x * 2 + 1];
-        Inc(x);
       end;
       ikcp_free(kcp^.acklist);
     end;
+
     kcp^.acklist := acklist;
     kcp^.ackblock := newblock;
   end;
@@ -756,6 +783,7 @@ begin
     ikcp_segment_delete(kcp, newseg);
     Exit;
   end;
+
   p := iqueue_entry(kcp^.rcv_buf.prev);
   while (p <> @kcp^.rcv_buf) do
   begin
@@ -768,6 +796,7 @@ begin
     if (_itimediff(sn, seg^.sn) > 0) then Break;
     p := prev;
   end;
+
   if (not re) then
   begin
     iqueue_init(newseg);
@@ -777,10 +806,12 @@ begin
   else begin
     ikcp_segment_delete(kcp, newseg);
   end;
+
 {$IFDEF QPRINT}
   ikcp_qprint('rcvbuf', @kcp^.rcv_buf);
   printf('rcv_nxt = %d' + #13#10, [kcp^.rcv_nxt]);
 {$ENDIF}
+
   // move available data from rcv_buf -> rcv_queue
   while (not iqueue_is_empty(@kcp^.rcv_buf)) do
   begin
@@ -821,12 +852,16 @@ begin
   flag := False;
   if (ikcp_canlog(kcp, CONST_IKCP_LOG_INPUT)) then
     ikcp_log(kcp, CONST_IKCP_LOG_INPUT, '[RI] %d bytes', [size]);
-  if ((data = nil) or (size < 24)) then Exit(0);
-  while(True) do
+
+  if ((data = nil) or (size < 24)) then Exit(-1);
+
+  while (True) do
   begin
     if (size < IKCP_OVERHEAD) then Break;
+
     data := ikcp_decode32u(data, @conv);
     if (conv <> kcp^.conv) then Exit(-1);
+
 		data := ikcp_decode8u(data, @cmd);
 		data := ikcp_decode8u(data, @frg);
 		data := ikcp_decode16u(data, @wnd);
@@ -834,8 +869,11 @@ begin
 		data := ikcp_decode32u(data, @sn);
 		data := ikcp_decode32u(data, @una_);
 		data := ikcp_decode32u(data, @len);
+
     Dec(size, IKCP_OVERHEAD);
+
     if (size < len) then Exit(-2);
+
     if ((cmd <> IKCP_CMD_PUSH) and (cmd <> IKCP_CMD_ACK) and (cmd <> IKCP_CMD_WASK) and
       (cmd <> IKCP_CMD_WINS)) then Exit(-3);
 
@@ -883,8 +921,10 @@ begin
           seg^.sn := sn;
           seg^.una := una_;
           seg^.len := len;
+
           if (len > 0) then
             memcpy(@seg^.data, data, len);
+
           ikcp_parse_data(kcp, seg);
         end;
       end;
@@ -981,8 +1021,10 @@ begin
   ptr := buffer;
   change := 0;
   lost := 0;
+
   // 'ikcp_update' haven't been called.
   if (kcp^.updated = 0) then Exit;
+
 	seg.conv := kcp^.conv;
 	seg.cmd := IKCP_CMD_ACK;
 	seg.frg := 0;
@@ -1004,7 +1046,9 @@ begin
     ikcp_ack_get(kcp, i, @seg.sn, @seg.ts);
     ptr := ikcp_encode_seg(ptr, @seg);
   end;
+
   kcp^.ackcount := 0;
+
 	// probe window size (if remote window size equals zero)
   if (kcp^.rmt_wnd = 0) then
   begin
@@ -1016,14 +1060,13 @@ begin
     else begin
       if (_itimediff(kcp^.current, kcp^.ts_probe) >= 0) then
       begin
-        if (_itimediff(kcp^.current, kcp^.ts_probe) >= 0) then
-        begin
-          if (kcp^.probe_wait < IKCP_PROBE_INIT) then kcp^.probe_wait := IKCP_PROBE_INIT;
-          kcp^.probe_wait := kcp^.probe_wait div 2;
-          if (kcp^.probe_wait > IKCP_PROBE_LIMIT) then kcp^.probe_wait := IKCP_PROBE_LIMIT;
-          kcp^.ts_probe := kcp^.current + kcp^.probe_wait;
-          kcp^.probe := kcp^.probe or IKCP_ASK_SEND;
-        end;
+        if (kcp^.probe_wait < IKCP_PROBE_INIT) then
+          kcp^.probe_wait := IKCP_PROBE_INIT;
+        kcp^.probe_wait := kcp^.probe_wait div 2;
+        if (kcp^.probe_wait > IKCP_PROBE_LIMIT) then
+          kcp^.probe_wait := IKCP_PROBE_LIMIT;
+        kcp^.ts_probe := kcp^.current + kcp^.probe_wait;
+        kcp^.probe := kcp^.probe or IKCP_ASK_SEND;
       end;
     end;
   end
@@ -1031,6 +1074,7 @@ begin
     kcp^.ts_probe := 0;
     kcp^.probe_wait := 0;
   end;
+
   // flush window probing commands
   if ((kcp^.probe and IKCP_ASK_SEND) > 0) then
   begin
@@ -1056,6 +1100,7 @@ begin
     end;
     ptr := ikcp_encode_seg(ptr, @seg);
   end;
+
   kcp^.probe := 0;
 
   // calculate window size
@@ -1066,7 +1111,9 @@ begin
   while (_itimediff(kcp^.snd_nxt, kcp^.snd_una + cwnd) < 0) do
   begin
     if (iqueue_is_empty(@kcp^.snd_queue)) then Break;
+
     newseg := iqueue_entry(kcp^.snd_queue.next);
+
     iqueue_del(newseg);
     iqueue_add_tail(newseg, @kcp^.snd_buf);
 		Dec(kcp^.nsnd_que);
@@ -1084,6 +1131,7 @@ begin
 		newseg^.fastack := 0;
 		newseg^.xmit := 0;
   end;
+
   // calculate resent
   if (kcp^.fastresend > 0) then
     resent := kcp^.fastresend
@@ -1093,6 +1141,7 @@ begin
     rtomin := kcp^.rx_rto shr 3
   else
     rtomin := 0;
+
 	// flush data segment
   p := kcp^.snd_buf.next;
   while (p <> @kcp^.snd_buf) do
@@ -1132,27 +1181,34 @@ begin
       segment^.ts := current;
       segment^.wnd := seg.wnd;
       segment^.una := kcp^.rcv_nxt;
+
       size_ := UInt32(ptr) - UInt32(buffer);
       need := IKCP_OVERHEAD + segment^.len;
+
       if (size_ + need > kcp^.mtu) then
       begin
         ikcp_output(kcp, buffer, size_);
         ptr := buffer;
       end;
+
       ptr := ikcp_encode_seg(ptr, segment);
+
       if (segment^.len > 0) then
       begin
         memcpy(ptr, @segment^.data, segment^.len);
         Inc(ptr, segment^.len);
       end;
+
       if (segment^.xmit >= kcp^.dead_link) then
         kcp^.state := UInt32(-1);
     end;
     p := p^.next;
   end;
+
   // flash remain segments
   size := UInt32(ptr) - UInt32(buffer);
   if (size > 0) then ikcp_output(kcp, buffer, size);
+
   // update ssthresh
   if (change <> 0) then
   begin
@@ -1162,6 +1218,7 @@ begin
     kcp^.cwnd := kcp^.ssthresh + resent;
     kcp^.incr := kcp^.cwnd * kcp^.mss;
   end;
+
   if (lost <> 0) then
   begin
     kcp^.ssthresh := cwnd div 2;
@@ -1169,12 +1226,14 @@ begin
     kcp^.cwnd := 1;
     kcp^.incr := kcp^.mss;
   end;
+
 	if (kcp^.cwnd < 1) then
   begin
 		kcp^.cwnd := 1;
 		kcp^.incr := kcp^.mss;
   end;
 end;
+
 //---------------------------------------------------------------------
 // update state (call it repeatedly, every 10ms-100ms), or you can ask
 // ikcp_check when to call it again (without ikcp_input/_send calling).
@@ -1190,12 +1249,15 @@ begin
     kcp^.updated := 1;
     kcp^.ts_flush := kcp^.current;
   end;
+
   slap := _itimediff(kcp^.current, kcp^.ts_flush);
+
   if ((slap >= 10000) or (slap < -10000)) then
   begin
     kcp^.ts_flush := kcp^.current;
     slap := 0;
   end;
+
   if (slap >= 0) then
   begin
     kcp^.ts_flush := kcp^.ts_flush + kcp^.interval;
@@ -1204,6 +1266,7 @@ begin
     ikcp_flush(kcp);
   end;
 end;
+
 //---------------------------------------------------------------------
 // Determine when should you invoke ikcp_update:
 // returns when you should invoke ikcp_update in millisec, if there
@@ -1224,10 +1287,14 @@ begin
   tm_packet := $7fffffff;
   minimal := 0;
   if (kcp^.updated = 0) then Exit(current);
+
   if ((_itimediff(current, ts_flush) >= 10000) or
     (_itimediff(current, ts_flush) < -10000)) then ts_flush := current;
+
   if (_itimediff(current, ts_flush) >= 0) then Exit(current);
+
   tm_flush := _itimediff(ts_flush, current);
+
   seg := kcp^.snd_buf.next;
   while(seg <> @kcp^.snd_buf) do
   begin
@@ -1236,11 +1303,13 @@ begin
     if (diff < tm_packet) then tm_packet := diff;
     seg := seg^.next;
   end;
+
   if (tm_packet < tm_flush) then
     minimal := UInt32(tm_packet)
   else
     minimal := UInt32(tm_flush);
   if (minimal >= kcp^.interval) then minimal := kcp^.interval;
+
   Result := current + minimal;
 end;
 
@@ -1284,7 +1353,7 @@ begin
       interval := 5000
     else if (interval < 10) then
       interval := 10;
-      kcp^.interval := interval;
+    kcp^.interval := interval;
   end;
   if (resend >= 0) then kcp^.fastresend := resend;
   if (nc >= 0) then kcp^.nocwnd := nc;

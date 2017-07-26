@@ -287,8 +287,8 @@ begin
   @kcp2^.writelog := @outmsg;
 
 
-  kcp1^.logmask := $7FFFFFFF;
-  kcp2^.logmask := $7FFFFFFF;
+  //kcp1^.logmask := $7FFFFFFF;
+  //kcp2^.logmask := $7FFFFFFF;
 
   current := iclock();
   slap := current + 20;
@@ -297,10 +297,12 @@ begin
   sumrtt := 0;
   count := 0;
   maxrtt := 0;
+
 	// 配置窗口大小：平均延迟200ms，每20ms发送一个包，
 	// 而考虑到丢包重发，设置最大收发窗口为128
 	ikcp_wndsize(kcp1, 128, 128);
 	ikcp_wndsize(kcp2, 128, 128);
+
   if (mode = 0) then
   begin
 		// 默认模式
@@ -339,10 +341,12 @@ begin
       PTest(@buffer[0])^.a := index;
       PTest(@buffer[0])^.b := current;
       Inc(index);
-      slap := slap + 20;
+      Inc(slap, 20);
+
       // 发送上层协议包
 			ikcp_send(kcp1, @buffer[0], 8);
     end;
+
     // 处理虚拟网络：检测是否有udp包从p1->p2
     while True do
     begin
@@ -351,6 +355,7 @@ begin
 			// 如果 p2收到udp，则作为下层协议输入到kcp2
 			ikcp_input(kcp2, @buffer[0], hr);
     end;
+
     // 处理虚拟网络：检测是否有udp包从p2->p1
     while True do
     begin
@@ -359,6 +364,7 @@ begin
 			// 如果 p1收到udp，则作为下层协议输入到kcp2
 			ikcp_input(kcp1, @buffer[0], hr);
     end;
+
     // kcp2接收到任何包都返回回去
 		while True do
     begin
@@ -368,6 +374,7 @@ begin
 			// 如果收到包就回射
 			ikcp_send(kcp2, @buffer[0], hr);
     end;
+
     // kcp1收到kcp2的回射数据
     while True do
     begin
@@ -383,21 +390,28 @@ begin
         Writeln(Format('ERROR sn %d<->%d', [count, next]));
         Exit;
       end;
+
       Inc(next);
-      sumrtt := sumrtt + rtt;
+      Inc(sumrtt, rtt);
       Inc(count);
       if (rtt > maxrtt) then maxrtt := rtt;
+
       Writeln(Format('[RECV] mode=%s sn=%d rtt=%d', [getmode(mode), sn, rtt]));
     end;
     if (next > 1000) then Break;
   end;
+
   ts1 := iclock() - ts1;
+
   ikcp_release(kcp1);
   ikcp_release(kcp2);
+
   Writeln(Format('%s mode result (%dms)', [getmode(mode), ts1]));
   Writeln(Format('avgrtt=%d maxrtt=%d tx1=%d tx2=%d', [sumrtt mod count, maxrtt,
     vnet.tx1, vnet.tx2]));
+
   FreeAndNil(vnet);
+
   Writeln('press enter to next ...');
   readln;
 end;
