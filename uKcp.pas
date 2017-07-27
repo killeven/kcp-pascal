@@ -767,7 +767,7 @@ end;
 {$PointerMath OFF}
 
 //---------------------------------------------------------------------
-// parse data
+// parse data(fixed)
 //---------------------------------------------------------------------
 procedure ikcp_parse_data(kcp: PkcpCb; newseg: PKcpSeg);
 var
@@ -787,6 +787,7 @@ begin
   p := iqueue_entry(kcp^.rcv_buf.prev);
   while (p <> @kcp^.rcv_buf) do
   begin
+    seg := iqueue_entry(p);
     prev := p^.prev;
     if (seg^.sn = sn) then
     begin

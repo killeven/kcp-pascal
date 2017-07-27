@@ -13,14 +13,18 @@ uses
 
 var
   init: Boolean = false;
-  start: UInt32;
+  freq: Int64;
 
 function iclock(): UInt32;
+var
+  fc: Int64;
 begin
   if (not init) then
-    start := GetTickCount();
-  init := True;
-  Result := GetTickCount() - start;
+  begin
+    init := QueryPerformanceFrequency(freq);
+  end;
+  QueryPerformanceCounter(fc);
+  Result := UInt32(fc div (freq div 1000));
 end;
 
 procedure isleep(millisecond: UInt32);
