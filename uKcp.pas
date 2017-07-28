@@ -771,7 +771,7 @@ end;
 //---------------------------------------------------------------------
 procedure ikcp_parse_data(kcp: PkcpCb; newseg: PKcpSeg);
 var
-  p, prev, seg: PKcpSeg;
+  prev, seg: PKcpSeg;
   sn: UInt32;
   re: Boolean;
 begin
@@ -784,24 +784,23 @@ begin
     Exit;
   end;
 
-  p := iqueue_entry(kcp^.rcv_buf.prev);
-  while (p <> @kcp^.rcv_buf) do
+  seg := iqueue_entry(kcp^.rcv_buf.prev);
+  while (seg <> @kcp^.rcv_buf) do
   begin
-    seg := iqueue_entry(p);
-    prev := p^.prev;
+    prev := seg^.prev;
     if (seg^.sn = sn) then
     begin
       re := True;
       Break;
     end;
     if (_itimediff(sn, seg^.sn) > 0) then Break;
-    p := prev;
+    seg := prev;
   end;
 
   if (not re) then
   begin
     iqueue_init(newseg);
-    iqueue_add(newseg, p);
+    iqueue_add(newseg, seg);
     Inc(kcp^.nrcv_buf);
   end
   else begin
